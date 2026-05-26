@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC Remote — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0c0e12;
+    --bg2:       #13161c;
+    --bg3:       #1a1e27;
+    --border:    rgba(255,255,255,0.07);
+    --border2:   rgba(255,255,255,0.13);
+    --text:      #e8eaf0;
+    --muted:     #6b7280;
+    --accent:    #4f8ef7;
+    --accent2:   #2d6fef;
+    --danger:    #e05353;
+    --danger2:   #c03939;
+    --success:   #3fba7a;
+    --warn:      #e0943f;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* ── Layout ────────────────────────────────── */
+  .shell {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  /* ── Topbar ─────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--muted); font-weight: 400; }
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--muted);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 4px 12px;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .dot.online  { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .dot.connecting { background: var(--warn); animation: blink 1s ease infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Config panel ──────────────────────────── */
+  .panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+  }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 10px;
+    align-items: end;
+  }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+    margin-bottom: 5px;
+  }
+  .field input {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .btn-connect {
+    height: 36px;
+    padding: 0 18px;
+    background: var(--accent2);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn-connect:hover  { background: var(--accent); }
+  .btn-connect:active { transform: scale(0.97); }
+  .btn-connect.disconnect { background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); }
+  .btn-connect.disconnect:hover { border-color: var(--danger); color: var(--danger); background: var(--bg3); }
+
+  /* ── Controls ──────────────────────────────── */
+  .controls-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .ctrl-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .action-btn {
+    width: 100%;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--bg3);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .action-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: white;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .action-btn:hover:not(:disabled)::after { opacity: 0.04; }
+  .action-btn:active:not(:disabled) { transform: scale(0.98); }
+  .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+  .action-btn.lock   { border-color: rgba(79,142,247,0.3); color: #a3c0f8; }
+  .action-btn.lock:hover:not(:disabled) { border-color: var(--accent); background: rgba(79,142,247,0.08); }
+
+  .action-btn.danger { border-color: rgba(224,83,83,0.3); color: #f4a0a0; }
+  .action-btn.danger:hover:not(:disabled) { border-color: var(--danger); background: rgba(224,83,83,0.08); }
+
+  /* ── Stream ────────────────────────────────── */
+  .stream-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .stream-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .stream-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .stream-controls { display: flex; align-items: center; gap: 8px; }
+  .stream-url-input {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 10px;
+    outline: none;
+    width: 230px;
+    transition: border-color 0.15s;
+  }
+  .stream-url-input:focus { border-color: var(--accent); }
+  .btn-stream {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 7px;
+    border: 1px solid var(--border2);
+    background: var(--bg3);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-stream:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-stream.stop:hover { border-color: var(--danger); color: var(--danger); }
+
+  .stream-viewport {
+    position: relative;
+    width: 100%;
+    background: var(--bg);
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stream-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+  }
+  .stream-placeholder svg { width: 36px; height: 36px; opacity: 0.4; }
+  .stream-placeholder p { font-size: 13px; }
+  .stream-placeholder code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    color: var(--accent);
+  }
+  #streamImg {
+    display: none;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  /* ── Log ───────────────────────────────────── */
+  .log-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-header span {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .btn-clear {
+    background: none; border: none; color: var(--muted);
+    font-family: var(--mono); font-size: 11px; cursor: pointer;
+  }
+  .btn-clear:hover { color: var(--text); }
+  .log-body {
+    padding: 0.75rem 1.5rem;
+    max-height: 140px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-track { background: transparent; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+  .log-line {
+    display: flex;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-msg  { color: var(--text); }
+  .log-line.ok  .log-msg { color: var(--success); }
+  .log-line.err .log-msg { color: var(--danger); }
+  .log-line.cmd .log-msg { color: var(--accent); }
+  .log-line.warn .log-msg { color: var(--warn); }
+
+  /* ── Confirm modal ─────────────────────────── */
+  .modal-bg {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 16px;
+    padding: 2rem;
+    max-width: 320px;
+    width: 90%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    animation: pop 0.18s ease;
+  }
+  @keyframes pop { from{transform:scale(0.93);opacity:0} to{transform:scale(1);opacity:1} }
+  .modal-icon { font-size: 32px; line-height: 1; }
+  .modal h2 { font-size: 16px; font-weight: 500; }
+  .modal p  { font-size: 13px; color: var(--muted); }
+  .modal-btns { display: flex; gap: 10px; }
+  .modal-btns button {
+    flex: 1; height: 40px; border-radius: 9px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    font-family: var(--sans); transition: all 0.15s;
+  }
+  .btn-cancel {
+    background: var(--bg3); border: 1px solid var(--border2); color: var(--muted);
+  }
+  .btn-cancel:hover { border-color: var(--border2); color: var(--text); }
+  .btn-confirm {
+    background: var(--danger2); border: 1px solid transparent; color: #fff;
+  }
+  .btn-confirm:hover { background: var(--danger); }
+
+  @media (max-width: 600px) {
+    .config-grid { grid-template-columns: 1fr; }
+    .controls-row { grid-template-columns: 1fr; }
+    .stream-controls { flex-wrap: wrap; }
+    .stream-url-input { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="logo">PC<span>/</span>Remote</div>
+    <div class="status-pill">
+      <div class="dot" id="dot"></div>
+      <span id="statusTxt">déconnecté</span>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="panel">
+    <div class="panel-title">Connexion MQTT</div>
+    <div class="config-grid">
+      <div class="field">
+        <label>BROKER</label>
+        <input id="broker" value="broker.hivemq.com" placeholder="broker MQTT">
+      </div>
+      <div class="field">
+        <label>TOPIC</label>
+        <input id="topic" value="monpc/perso/commandes/lol321lol" placeholder="topic unique">
+      </div>
+      <button class="btn-connect" id="btnConn" onclick="toggleConnect()">Connecter</button>
+    </div>
+  </div>
+
+  <!-- Commandes -->
+  <div class="controls-row">
+    <div class="ctrl-card">
+      <div class="panel-title">Écran</div>
+      <button class="action-btn lock" id="btnLock" disabled onclick="send('lock')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        Bloquer l'écran
+      </button>
+    </div>
+    <div class="ctrl-card">
+      <div class="panel-title">Alimentation</div>
+      <button class="action-btn danger" id="btnShutdown" disabled onclick="askConfirm('shutdown','Éteindre le PC perso ?','Le PC va s\'éteindre immédiatement.')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><line x1="12" y1="2" x2="12" y2="12"/>
+        </svg>
+        Éteindre le PC
+      </button>
+    </div>
+  </div>
+
+  <!-- Stream vidéo -->
+  <div class="stream-panel">
+    <div class="stream-header">
+      <div class="stream-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        Écran en direct
+      </div>
+      <div class="stream-controls">
+        <input class="stream-url-input" id="streamUrl" placeholder="http://ip-pc-perso:8080/stream" />
+        <button class="btn-stream" id="btnStream" onclick="toggleStream()">Démarrer</button>
+      </div>
+    </div>
+    <div class="stream-viewport">
+      <div class="stream-placeholder" id="streamPlaceholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <p>Stream non démarré</p>
+        <code>http://&lt;ip-pc-perso&gt;:8080/stream</code>
+      </div>
+      <img id="streamImg" alt="Stream PC perso">
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="log-panel">
+    <div class="log-header">
+      <span>Journal</span>
+      <button class="btn-clear" onclick="clearLog()">effacer</button>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line warn"><span class="log-time">--:--:--</span><span class="log-msg">En attente de connexion...</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal confirmation -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-icon">⚠️</div>
+    <h2 id="modalTitle">Confirmer</h2>
+    <p id="modalDesc"></p>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+      <button class="btn-confirm" id="btnConfirm">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let client = null;
+  let isConnected = false;
+  let streamActive = false;
+
+  // ── Utilities ──────────────────────────────────────────────
+  function ts() {
+    return new Date().toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  function log(msg, type = '') {
+    const body = document.getElementById('logBody');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    line.innerHTML = `<span class="log-time">${ts()}</span><span class="log-msg">${msg}</span>`;
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+
+  // ── Status ────────────────────────────────────────────────
+  function setStatus(state) {
+    const dot = document.getElementById('dot');
+    const txt = document.getElementById('statusTxt');
+    const btns = ['btnLock','btnShutdown'];
+    dot.className = 'dot';
+    if (state === 'online') {
+      dot.classList.add('online');
+      txt.textContent = 'connecté';
+      btns.forEach(id => document.getElementById(id).disabled = false);
+      isConnected = true;
+    } else if (state === 'connecting') {
+      dot.classList.add('connecting');
+      txt.textContent = 'connexion...';
+      btns.forEach(id => document.getElementById(id).disabled = true);
+      isConnected = false;
+    } else {
+      txt.textContent = 'déconnecté';
+      btns.forEach(id => document.getElementById(id).disabled = true);
+      isConnected = false;
+    }
+  }
+
+  // ── MQTT ─────────────────────────────────────────────────
+  function toggleConnect() {
+    if (isConnected || client) {
+      client.end(true);
+      client = null;
+      setStatus('offline');
+      document.getElementById('btnConn').textContent = 'Connecter';
+      document.getElementById('btnConn').classList.remove('disconnect');
+      log('Déconnecté manuellement.', 'warn');
+      return;
+    }
+    const broker = document.getElementById('broker').value.trim();
+    const topic  = document.getElementById('topic').value.trim();
+    if (!broker || !topic) { log('Broker ou topic manquant.', 'err'); return; }
+
+    setStatus('connecting');
+    document.getElementById('btnConn').textContent = 'Connexion...';
+    log(`Connexion à ${broker}...`, '');
+
+    client = mqtt.connect(`wss://${broker}:8884/mqtt`, {
+      clientId: 'admin_' + Math.random().toString(36).substr(2, 8),
+      reconnectPeriod: 5000,
+      connectTimeout: 12000,
+    });
+
+    client.on('connect', () => {
+      setStatus('online');
+      document.getElementById('btnConn').textContent = 'Déconnecter';
+      document.getElementById('btnConn').classList.add('disconnect');
+      log('Connecté au broker MQTT.', 'ok');
+    });
+    client.on('error',   e => log('Erreur : ' + e.message, 'err'));
+    client.on('offline', () => { setStatus('connecting'); log('Reconnexion...', 'warn'); });
+    client.on('close',   () => { if (isConnected) { setStatus('connecting'); log('Connexion perdue.', 'err'); } });
+  }
+
+  // ── Send command ──────────────────────────────────────────
+  function send(cmd) {
+    if (!isConnected) { log('Non connecté.', 'err'); return; }
+    const topic = document.getElementById('topic').value.trim();
+    client.publish(topic, cmd, { qos: 1 }, err => {
+      if (err) log('Erreur envoi : ' + err.message, 'err');
+      else     log(`→ commande "${cmd}" envoyée`, 'cmd');
+    });
+  }
+
+  // ── Confirm modal ─────────────────────────────────────────
+  let pendingCmd = null;
+  function askConfirm(cmd, title, desc) {
+    pendingCmd = cmd;
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalDesc').textContent  = desc;
+    document.getElementById('modalBg').classList.add('show');
+    document.getElementById('btnConfirm').onclick = () => { closeModal(); send(pendingCmd); };
+  }
+  function closeModal() {
+    document.getElementById('modalBg').classList.remove('show');
+    pendingCmd = null;
+  }
+  document.getElementById('modalBg').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+
+  // ── Stream MJPEG ──────────────────────────────────────────
+  function toggleStream() {
+    const url = document.getElementById('streamUrl').value.trim();
+    const img  = document.getElementById('streamImg');
+    const ph   = document.getElementById('streamPlaceholder');
+    const btn  = document.getElementById('btnStream');
+
+    if (streamActive) {
+      img.src = '';
+      img.style.display = 'none';
+      ph.style.display  = 'flex';
+      btn.textContent = 'Démarrer';
+      btn.classList.remove('stop');
+      streamActive = false;
+      log('Stream arrêté.', 'warn');
+      return;
+    }
+
+    if (!url) { log('URL du stream manquante.', 'err'); return; }
+    log(`Connexion au stream : ${url}`, '');
+    img.src = url;
+    img.style.display = 'block';
+    ph.style.display  = 'none';
+    btn.textContent = 'Arrêter';
+    btn.classList.add('stop');
+    streamActive = true;
+
+    img.onerror = () => {
+      img.style.display = 'none';
+      ph.style.display  = 'flex';
+      btn.textContent = 'Démarrer';
+      btn.classList.remove('stop');
+      streamActive = false;
+      log('Stream inaccessible — vérifie l\'URL et que l\'agent est lancé.', 'err');
+    };
+  }
+</script>
+</body>
+</html>
